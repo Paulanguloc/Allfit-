@@ -1311,73 +1311,44 @@ async function saveProfile() {
 
 
 // ══════════════════════════════════════════
-// AI — Groq primero, fallback Anthropic
+// AI — Solo Groq (soporta CORS desde browser)
 // ══════════════════════════════════════════
 async function groqChat(messages, model='llama-3.3-70b-versatile', max_tokens=800) {
-  try {
-    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + GROQ_KEY
-      },
-      body: JSON.stringify({ model, messages, max_tokens, temperature: 0.7 })
-    });
-    if (!res.ok) throw new Error('groq_http_' + res.status);
-    const data = await res.json();
-    return data.choices[0].message.content;
-  } catch (e) {
-    console.warn('Groq falló, usando Anthropic:', e.message);
-    return await anthropicChat(messages, max_tokens);
-  }
-}
-
-async function anthropicChat(messages, max_tokens=800) {
-  const sysMsg   = messages.find(m => m.role === 'system');
-  const userMsgs = messages.filter(m => m.role !== 'system');
-  const body = {
-    model: 'claude-sonnet-4-20250514',
-    max_tokens,
-    messages: userMsgs.length ? userMsgs : [{ role:'user', content:'Hola' }]
-  };
-  if (sysMsg) body.system = sysMsg.content;
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
+  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true'
+      'Authorization': 'Bearer ' + GROQ_KEY
     },
-    body: JSON.stringify(body)
+    body: JSON.stringify({ model, messages, max_tokens, temperature: 0.7 })
   });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error?.message || 'Anthropic error ' + res.status);
-  return data.content[0].text;
+  if (!res.ok) throw new Error(data.error?.message || 'Groq error ' + res.status);
+  return data.choices[0].message.content;
 }
 
 async function groqVision(base64img, prompt) {
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
+  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true'
+      'Authorization': 'Bearer ' + GROQ_KEY
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 600,
+      model: 'meta-llama/llama-4-scout-17b-16e-instruct',
       messages: [{
         role: 'user',
         content: [
-          { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: base64img } },
+          { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,' + base64img } },
           { type: 'text', text: prompt }
         ]
-      }]
+      }],
+      max_tokens: 600
     })
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error?.message || 'Vision error ' + res.status);
-  return data.content[0].text;
+  return data.choices[0].message.content;
 }
 
 // ══════════════════════════════════════════
@@ -1395,7 +1366,32 @@ function showToast(msg, type='success') {
 // ══════════════════════════════════════════
 // START
 // ══════════════════════════════════════════
-init();
+
+// Test Groq key on load
+async function testGroqKey() {
+  try {
+    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + GROQ_KEY },
+      body: JSON.stringify({ model:'llama-3.3-70b-versatile', messages:[{role:'user',content:'1+1='}], max_tokens:5 })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      console.error('Groq key test failed:', data.error?.message);
+      showToast('IA: ' + (data.error?.message || 'key inválida'), 'error');
+    } else {
+      console.log('Groq key OK');
+    }
+  } catch(e) {
+    console.error('Groq CORS/network error:', e.message);
+    // CORS error = key exists but browser blocked. Still try on actual use.
+  }
+}
+
+init().then(() => {
+  // Test key after init so toast shows
+  setTimeout(testGroqKey, 2000);
+});
 </script>
 </body>
 </html>
