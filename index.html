@@ -1301,32 +1301,67 @@ async function saveProfile() {
 }
 
 // ══════════════════════════════════════════
-// GROQ API
+// AI API (Groq via CORS-friendly proxy)
 // ══════════════════════════════════════════
 async function groqChat(messages, model='llama-3.3-70b-versatile', max_tokens=800) {
+  // Use Groq with explicit CORS headers
   const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method:'POST',
-    headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+GROQ_KEY },
+    headers:{
+      'Content-Type':'application/json',
+      'Authorization':'Bearer '+GROQ_KEY
+    },
     body: JSON.stringify({ model, messages, max_tokens, temperature:0.7 })
   });
+  if (!res.ok) {
+    const err = await res.text();
+    // fallback to Anthropic if Groq fails CORS
+    return await anthropicChat(messages, max_tokens);
+  }
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error?.message || 'Groq error');
   return data.choices[0].message.content;
 }
 
-async function groqVision(base64img, prompt) {
-  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+async function anthropicChat(messages, max_tokens=800) {
+  // Extract system message if present
+  const sysMsg = messages.find(m => m.role === 'system');
+  const userMsgs = messages.filter(m => m.role !== 'system');
+  const body = {
+    model: 'claude-sonnet-4-20250514',
+    max_tokens,
+    messages: userMsgs
+  };
+  if (sysMsg) body.system = sysMsg.content;
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
     method:'POST',
-    headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+GROQ_KEY },
+    headers:{ 'Content-Type':'application/json' },
+    body: JSON.stringify(body)
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error?.message || 'AI error');
+  return data.content[0].text;
+}
+
+async function groqVision(base64img, prompt) {
+  // Vision: use Anthropic Claude (supports base64 images)
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method:'POST',
+    headers:{ 'Content-Type':'application/json' },
     body: JSON.stringify({
-      model:'meta-llama/llama-4-scout-17b-16e-instruct',
-      messages:[{ role:'user', content:[{ type:'image_url', image_url:{ url:'data:image/jpeg;base64,'+base64img } },{ type:'text', text:prompt }] }],
-      max_tokens:500
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 500,
+      messages:[{
+        role:'user',
+        content:[
+          { type:'image', source:{ type:'base64', media_type:'image/jpeg', data: base64img } },
+          { type:'text', text: prompt }
+        ]
+      }]
     })
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error?.message || 'Vision error');
-  return data.choices[0].message.content;
+  return data.content[0].text;
 }
 
 // ══════════════════════════════════════════
