@@ -989,8 +989,11 @@ async function estimateFood() {
       { role:'system', content:'Sos un nutricionista. El usuario describe una comida. Respondé SOLO con JSON válido, sin texto extra, sin markdown. Formato: {"name":"nombre corto","kcal":number,"protein":number,"carbs":number,"fats":number}. Estimá valores aproximados para la porción descrita.' },
       { role:'user', content: desc }
     ]);
-    const clean = res.replace(/```json|```/g,'').trim();
-    const food = JSON.parse(clean);
+    let jsonStr2 = res;
+    const match2 = res.match(/\{[\s\S]*\}/);
+    if (match2) jsonStr2 = match2[0];
+    jsonStr2 = jsonStr2.replace(/```json|```/g,'').trim();
+    const food = JSON.parse(jsonStr2);
     window._pendingFood = { ...food, description: desc };
     document.getElementById('foodAIResult').innerHTML = `
       <div class="ai-result">
@@ -1005,7 +1008,8 @@ async function estimateFood() {
     btn.innerHTML = '<span id="estimateBtnText">✨ Estimar de nuevo</span>';
     btn.disabled = false;
   } catch(e) {
-    showToast('Error al analizar. Intentá de nuevo.','error');
+    console.error('estimateFood error:', e);
+    showToast('Error: ' + e.message.slice(0,60), 'error');
     btn.innerHTML = '<span id="estimateBtnText">✨ Estimar con IA</span>';
     btn.disabled = false;
   }
@@ -1054,14 +1058,19 @@ Respondé SOLO con JSON válido, sin markdown ni texto extra. Formato exacto:
 
   try {
     const res = await groqChat([{ role:'user', content: prompt }], 'llama-3.3-70b-versatile', 3000);
-    const clean = res.replace(/```json|```/g,'').trim();
-    const plan = JSON.parse(clean);
+    // robust JSON extract
+    let jsonStr = res;
+    const match = res.match(/\{[\s\S]*\}/);
+    if (match) jsonStr = match[0];
+    jsonStr = jsonStr.replace(/```json|```/g,'').trim();
+    const plan = JSON.parse(jsonStr);
     weekPlan = plan.days;
     await sb.from('allfit_plans').upsert({ user_id: currentUser.id, plan_json: JSON.stringify(weekPlan), updated_at: new Date().toISOString() });
     renderPlan();
     showToast('¡Plan generado! 🎉','success');
   } catch(e) {
-    showToast('Error generando plan. Intentá de nuevo.','error');
+    console.error('generatePlan error:', e);
+    showToast('Error: ' + e.message.slice(0,60), 'error');
     if (btn) btn.disabled=false;
     if (txt) txt.textContent = '✨ Generar plan con IA';
   }
@@ -1300,67 +1309,74 @@ async function saveProfile() {
   btn.textContent='Guardar cambios';
 }
 
+
 // ══════════════════════════════════════════
-// AI API (Groq via CORS-friendly proxy)
+// AI — Groq primero, fallback Anthropic
 // ══════════════════════════════════════════
 async function groqChat(messages, model='llama-3.3-70b-versatile', max_tokens=800) {
-  // Use Groq with explicit CORS headers
-  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method:'POST',
-    headers:{
-      'Content-Type':'application/json',
-      'Authorization':'Bearer '+GROQ_KEY
-    },
-    body: JSON.stringify({ model, messages, max_tokens, temperature:0.7 })
-  });
-  if (!res.ok) {
-    const err = await res.text();
-    // fallback to Anthropic if Groq fails CORS
+  try {
+    const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + GROQ_KEY
+      },
+      body: JSON.stringify({ model, messages, max_tokens, temperature: 0.7 })
+    });
+    if (!res.ok) throw new Error('groq_http_' + res.status);
+    const data = await res.json();
+    return data.choices[0].message.content;
+  } catch (e) {
+    console.warn('Groq falló, usando Anthropic:', e.message);
     return await anthropicChat(messages, max_tokens);
   }
-  const data = await res.json();
-  return data.choices[0].message.content;
 }
 
 async function anthropicChat(messages, max_tokens=800) {
-  // Extract system message if present
-  const sysMsg = messages.find(m => m.role === 'system');
+  const sysMsg   = messages.find(m => m.role === 'system');
   const userMsgs = messages.filter(m => m.role !== 'system');
   const body = {
     model: 'claude-sonnet-4-20250514',
     max_tokens,
-    messages: userMsgs
+    messages: userMsgs.length ? userMsgs : [{ role:'user', content:'Hola' }]
   };
   if (sysMsg) body.system = sysMsg.content;
   const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method:'POST',
-    headers:{ 'Content-Type':'application/json' },
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true'
+    },
     body: JSON.stringify(body)
   });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error?.message || 'AI error');
+  if (!res.ok) throw new Error(data.error?.message || 'Anthropic error ' + res.status);
   return data.content[0].text;
 }
 
 async function groqVision(base64img, prompt) {
-  // Vision: use Anthropic Claude (supports base64 images)
   const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method:'POST',
-    headers:{ 'Content-Type':'application/json' },
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true'
+    },
     body: JSON.stringify({
       model: 'claude-sonnet-4-20250514',
-      max_tokens: 500,
-      messages:[{
-        role:'user',
-        content:[
-          { type:'image', source:{ type:'base64', media_type:'image/jpeg', data: base64img } },
-          { type:'text', text: prompt }
+      max_tokens: 600,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: base64img } },
+          { type: 'text', text: prompt }
         ]
       }]
     })
   });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error?.message || 'Vision error');
+  if (!res.ok) throw new Error(data.error?.message || 'Vision error ' + res.status);
   return data.content[0].text;
 }
 
