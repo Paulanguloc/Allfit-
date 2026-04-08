@@ -514,20 +514,36 @@ select.form-input option{background:var(--card);color:var(--white)}
 
       <!-- Photo analysis -->
       <div class="card" style="margin-bottom:20px">
-        <div class="card-title">📷 Analizar comida por foto</div>
-        <p class="muted" style="font-size:.82rem;margin:6px 0 14px">Subí una foto y la IA estima calorías y macros</p>
-        <div class="photo-upload" id="photoUploadArea" onclick="document.getElementById('photoInput').click()">
-          <input type="file" id="photoInput" accept="image/*" capture="environment" style="display:none" onchange="handlePhotoSelect(event)">
+        <div class="card-title" style="margin-bottom:4px">📷 Analizar comida por foto</div>
+        <p class="muted" style="font-size:.82rem;margin-bottom:16px">La IA detecta calorías y macros de tu comida</p>
+
+        <!-- Upload area -->
+        <div id="photoUploadArea" style="border:2px dashed var(--border);border-radius:14px;padding:28px 16px;text-align:center;background:var(--surface)">
           <div id="photoUploadContent">
-            <div style="font-size:2rem;margin-bottom:8px">📸</div>
-            <div style="font-family:var(--fd);font-weight:700;font-size:.95rem">Tomar foto o subir imagen</div>
-            <div class="muted" style="font-size:.8rem;margin-top:4px">JPG, PNG — máx 10MB</div>
+            <div style="width:64px;height:64px;background:rgba(200,241,53,0.12);border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto 14px;font-size:1.8rem">📸</div>
+            <div style="font-family:var(--fd);font-weight:700;font-size:1rem;margin-bottom:6px">Tomar foto o subir imagen</div>
+            <div class="muted" style="font-size:.78rem;margin-bottom:18px">JPG, PNG o WEBP — máx 10MB</div>
+            <div style="display:flex;flex-direction:column;gap:10px;max-width:240px;margin:0 auto">
+              <button class="btn btn-lime btn-sm" onclick="document.getElementById('photoCamInput').click()">
+                📷 Usar cámara
+              </button>
+              <button class="btn btn-ghost btn-sm" onclick="document.getElementById('photoGalInput').click()">
+                🖼️ Seleccionar de galería
+              </button>
+            </div>
           </div>
-          <img id="photoPreview" class="photo-preview hidden">
+          <img id="photoPreview" style="max-width:100%;border-radius:10px;margin-top:12px;display:none">
+          <!-- hidden inputs -->
+          <input type="file" id="photoCamInput" accept="image/*" capture="environment" style="display:none" onchange="handlePhotoSelect(event)">
+          <input type="file" id="photoGalInput" accept="image/*" style="display:none" onchange="handlePhotoSelect(event)">
         </div>
-        <div id="photoAnalysisResult" class="hidden"></div>
+
+        <div id="photoAnalysisResult" class="hidden" style="margin-top:14px"></div>
         <button class="btn btn-lime mt12 hidden" id="analyzePhotoBtn" onclick="analyzePhoto()">
           <span id="analyzeBtnText">✨ Analizar con IA</span>
+        </button>
+        <button class="btn btn-ghost w100 mt8 hidden" id="changePhotoBtn" onclick="resetPhoto()">
+          Cambiar foto
         </button>
       </div>
 
@@ -1115,13 +1131,29 @@ function handlePhotoSelect(e) {
   const reader = new FileReader();
   reader.onload = (ev) => {
     currentPhotoBase64 = ev.target.result.split(',')[1];
-    document.getElementById('photoPreview').src = ev.target.result;
-    document.getElementById('photoPreview').classList.remove('hidden');
+    const preview = document.getElementById('photoPreview');
+    preview.src = ev.target.result;
+    preview.style.display = 'block';
     document.getElementById('photoUploadContent').style.display = 'none';
     document.getElementById('analyzePhotoBtn').classList.remove('hidden');
+    document.getElementById('changePhotoBtn').classList.remove('hidden');
     document.getElementById('photoAnalysisResult').classList.add('hidden');
+    document.getElementById('photoAnalysisResult').innerHTML = '';
   };
   reader.readAsDataURL(file);
+}
+
+function resetPhoto() {
+  currentPhotoBase64 = null;
+  document.getElementById('photoPreview').style.display = 'none';
+  document.getElementById('photoPreview').src = '';
+  document.getElementById('photoUploadContent').style.display = 'block';
+  document.getElementById('analyzePhotoBtn').classList.add('hidden');
+  document.getElementById('changePhotoBtn').classList.add('hidden');
+  document.getElementById('photoAnalysisResult').classList.add('hidden');
+  document.getElementById('photoAnalysisResult').innerHTML = '';
+  document.getElementById('photoCamInput').value = '';
+  document.getElementById('photoGalInput').value = '';
 }
 
 async function analyzePhoto() {
@@ -1144,8 +1176,7 @@ async function analyzePhoto() {
       </div>
       <button class="btn btn-lime mt12" onclick="savePhotoFood(${food.kcal},${food.protein},${food.carbs},${food.fats},'${food.name.replace(/'/g,"\\'")}')">✅ Guardar en mi registro</button>`;
     document.getElementById('photoAnalysisResult').classList.remove('hidden');
-    btn.innerHTML='<span>📷 Cambiar foto</span>'; btn.disabled=false;
-    btn.onclick = () => { document.getElementById('photoInput').click(); };
+    btn.innerHTML='<span id="analyzeBtnText">✨ Analizar de nuevo</span>'; btn.disabled=false;
   } catch(e) {
     showToast('No pude analizar la foto. Intentá con una imagen más clara.','error');
     btn.innerHTML='<span>✨ Intentar de nuevo</span>'; btn.disabled=false;
