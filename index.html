@@ -889,7 +889,7 @@ async function loadData() {
   ]);
   todayLogs = logs || [];
   weightLogs = weights || [];
-  if (plan) weekPlan = JSON.parse(plan.plan_json);
+  if(plan){const pd=JSON.parse(plan.plan_json);weekPlan=pd.days||pd;window._nutriTips=pd.tips||[];}
   if (rutina) rutinaData = JSON.parse(rutina.rutina_json);
   showApp();
 }
@@ -1153,7 +1153,7 @@ Respondé SOLO con JSON sin markdown:
   try {
     const res=await groq([{role:'user',content:prompt}],'llama-3.3-70b-versatile',3000);
     const m=res.match(/\{[\s\S]*\}/); const data=JSON.parse(m?m[0]:res);
-    weekPlan=data.days; window._nutriTips=data.tips;
+    weekPlan=data.days||data; window._nutriTips=data.tips||[];
     await sb.from('allfit_plans').upsert({user_id:user.id,plan_json:JSON.stringify(data),updated_at:new Date().toISOString()});
     renderNutri(); toast('¡Plan generado! 🥗','success');
   } catch(e) { toast('Error: '+e.message.slice(0,50),'error'); btn.disabled=false; document.getElementById('genNutriTxt').textContent='✨ Generar plan nutricional'; }
@@ -1179,18 +1179,28 @@ function setNutriDay(i) {
 
 function renderNutriDay(i) {
   const day=weekPlan[i]; if(!day)return'';
-  return (day.meals||[]).map(m=>`
+  return (day.meals||[]).map(m=>{
+    // Support both formats: items[] (new) and name+desc (old)
+    let itemsHtml = '';
+    if(m.items && m.items.length) {
+      itemsHtml = m.items.map(it=>`<div class="meal-plan-item">${it}</div>`).join('');
+    } else if(m.name) {
+      itemsHtml = `<div class="meal-plan-item">${m.name}</div>`;
+      if(m.desc) itemsHtml += `<div style="font-size:.82rem;color:var(--muted);margin-top:4px;padding-left:14px">${m.desc}</div>`;
+    }
+    return `
     <div class="meal-plan-card">
       <div class="meal-plan-type">${m.type}</div>
       <div class="meal-plan-time">${m.time||''}</div>
-      <div class="meal-plan-items">${(m.items||[]).map(it=>`<div class="meal-plan-item">${it}</div>`).join('')}</div>
+      <div class="meal-plan-items">${itemsHtml||'<div class="meal-plan-item">Ver descripción</div>'}</div>
       <div class="meal-plan-kcal">${Math.round(m.kcal||0)} kcal</div>
       <div class="macro-chips">
         <span class="mchip mchip-p">P: ${Math.round(m.protein||0)}g</span>
         <span class="mchip mchip-c">C: ${Math.round(m.carbs||0)}g</span>
         <span class="mchip mchip-g">G: ${Math.round(m.fats||0)}g</span>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
 // ── FOTO ──
@@ -1270,10 +1280,7 @@ async function logWeight() {
   if(result.error){toast('Error guardando','error');btn.textContent='Guardar';return;}
   await sb.from('allfit_users').update({weight:val}).eq('id',user.id);
   profile.weight=val; document.getElementById('pPeso').textContent=val; document.getElementById('ePeso').value=val;
-  // update IMC
-  const imc=(val/((profile.height/100)**2)).toFixed(1);
-  document.getElementById('dashIMC').textContent=imc;
-  document.getElementById('dashIMCLabel').textContent=imc<18.5?'Bajo peso':imc<25?'Peso normal':imc<30?'Sobrepeso':'Obesidad';
+  updateDashboard();
   document.getElementById('wInput').value=''; renderWeightView(); toast('Peso guardado ✅','success'); btn.textContent='Guardar';
 }
 
@@ -1297,6 +1304,20 @@ function renderWeightView(){
 }
 
 // ── PROFILE ──
+function updateDashboard() {
+  const goalMap={bajar:'perder peso',musculo:'ganar músculo',mantener:'mantener peso',resistencia:'resistencia'};
+  const expMap={principiante:'Principiante',intermedio:'Intermedio',avanzado:'Avanzado'};
+  const imc=(profile.weight/((profile.height/100)**2)).toFixed(1);
+  document.getElementById('dashIMC').textContent=imc;
+  document.getElementById('dashIMCLabel').textContent=imc<18.5?'Bajo peso':imc<25?'Peso normal':imc<30?'Sobrepeso':'Obesidad';
+  document.getElementById('dashKcal').textContent=profile.kcal_goal;
+  document.getElementById('dashDays').textContent=(profile.days||3)+' días';
+  document.getElementById('dashTime').textContent=(profile.session_time||60)+' min/sesión';
+  document.getElementById('dashLevel').textContent=expMap[profile.experience]||'--';
+  document.getElementById('dashGoalLabel').textContent=goalMap[profile.goal]||'--';
+  document.getElementById('dashHello').textContent='¡Hola, '+( profile.name||profile.email).split(' ')[0]+'! 👋';
+}
+
 async function saveProfile(){
   const peso=parseFloat(document.getElementById('ePeso').value),altura=parseFloat(document.getElementById('eAltura').value),goal=document.getElementById('eGoal').value,act=document.getElementById('eAct').value;
   if(!peso||!altura){toast('Completá los campos','error');return;}
@@ -1305,8 +1326,17 @@ async function saveProfile(){
   const upd={weight:peso,height:altura,goal,activity:act,kcal_goal:kcal,protein_goal:macros.protein,carbs_goal:macros.carbs,fats_goal:macros.fats};
   await sb.from('allfit_users').update(upd).eq('id',user.id);
   Object.assign(profile,upd);
-  document.getElementById('pKcal').textContent=kcal; document.getElementById('pProt').textContent=macros.protein+'g'; document.getElementById('pPeso').textContent=peso;
-  document.getElementById('dashKcal').textContent=kcal; renderHome(); toast('Perfil actualizado ✅','success'); btn.textContent='Guardar cambios';
+  // update profile stats
+  document.getElementById('pKcal').textContent=kcal;
+  document.getElementById('pProt').textContent=macros.protein+'g';
+  document.getElementById('pPeso').textContent=peso;
+  document.getElementById('pObj').textContent={bajar:'perder peso',musculo:'ganar músculo',mantener:'mantener peso',resistencia:'resistencia'}[goal]||'--';
+  // update dashboard hero
+  updateDashboard();
+  // update home macros ring
+  renderHome();
+  toast('Perfil actualizado ✅','success');
+  btn.textContent='Guardar cambios';
 }
 
 // ══════════════════════════════════════
